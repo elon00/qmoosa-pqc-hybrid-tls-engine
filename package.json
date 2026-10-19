@@ -1,18 +1,19 @@
 {
   "name": "@qmoosa/pqc-hybrid-tls-engine",
   "version": "1.0.0",
-  "description": "QMOOSA Post-Quantum Cryptography — Hybrid X25519 + ML-KEM-768 TLS 1.3 Handshake Engine & Key Schedule",
+  "description": "QMOOSA Post-Quantum Cryptography \u00e2\u20ac\u201d Hybrid X25519 + ML-KEM-768 TLS 1.3 Handshake Engine & Key Schedule",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test tests/engine.test.mjs",
+    "test": "npm run build && node --test tests/engine.test.mjs tests/authenticated-tls.test.mjs tests/key-schedule.test.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@noble/post-quantum": "^0.7.1",
-    "@qmoosa/pqc-hybrid-tls-protocol": "file:../qmoosa-pqc-hybrid-tls-protocol"
+    "@qmoosa/pqc-hybrid-tls-protocol": "file:../qmoosa-pqc-hybrid-tls-protocol",
+    "@noble/hashes": "2.4.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
@@ -29,5 +30,8 @@
     "quantum-safe"
   ],
   "author": "elon00",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.19.0"
+  }
 }

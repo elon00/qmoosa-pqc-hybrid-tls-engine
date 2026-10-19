@@ -8,7 +8,9 @@
  * where HkdfLabel = Length (2 bytes) || "tls13 " + Label (1 byte len + string) || Context (1 byte len + context)
  */
 
-import { hkdfSync, createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { expand } from '@noble/hashes/hkdf.js';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 
 export function sha256(data: Uint8Array): Uint8Array {
   return new Uint8Array(createHash('sha256').update(data).digest());
@@ -18,8 +20,16 @@ export function sha256(data: Uint8Array): Uint8Array {
  * Builds the TLS 1.3 HkdfLabel structure per RFC 8446 Section 7.1.
  */
 export function buildHkdfLabel(label: string, context: Uint8Array, length: number): Uint8Array {
+  if (typeof label !== 'string' || !(context instanceof Uint8Array) ||
+      !Number.isInteger(length) || length < 0 || length > 65535) {
+    throw new Error('INVALID_HKDF_LABEL: Invalid label, context or uint16 length');
+  }
   const labelPrefix = 'tls13 ';
   const fullLabel = Buffer.from(labelPrefix + label, 'utf8');
+
+  if (fullLabel.length > 255 || context.length > 255) {
+    throw new Error('INVALID_HKDF_LABEL: Encoded label and context must fit uint8 lengths');
+  }
 
   const buf = Buffer.alloc(2 + 1 + fullLabel.length + 1 + context.length);
   let offset = 0;
@@ -52,8 +62,8 @@ export function hkdfExpandLabel(
   length: number = 32
 ): Uint8Array {
   const hkdfLabel = buildHkdfLabel(label, context, length);
-  const derived = hkdfSync('sha256', Buffer.from(secret), Buffer.alloc(0), Buffer.from(hkdfLabel), length);
-  return new Uint8Array(derived);
+  // The secret is already a PRK: Extract must not be performed again.
+  return expand(nobleSha256, secret, hkdfLabel, length);
 }
 
 /**

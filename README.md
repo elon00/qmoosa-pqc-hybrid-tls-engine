@@ -1,32 +1,45 @@
 # @qmoosa/pqc-hybrid-tls-engine
 
-[![CI Gate](https://github.com/elon00/qmoosa-pqc-hybrid-tls-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/elon00/qmoosa-pqc-hybrid-tls-engine/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+Authenticated hybrid TLS 1.3 transport through maintained Node/OpenSSL, plus deprecated educational raw key-exchange helpers. Requires Node >=24.19.0 with X25519MLKEM768 support. Unsupported runtimes or peers fail closed.
 
-> QMOOSA Post-Quantum Cryptography Suite — Hybrid X25519 + ML-KEM-768 TLS 1.3 Handshake Engine & Key Schedule.
+## Authenticated transport
 
-## Overview
+```ts
+import { readFileSync } from 'node:fs';
+import { connectAuthenticatedHybridTls, createAuthenticatedHybridTlsServer } from '@qmoosa/pqc-hybrid-tls-engine';
 
-`@qmoosa/pqc-hybrid-tls-engine` implements the core cryptographic handshake state machine and record layer encryption for quantum-safe TLS 1.3 transport.
-It combines classical Curve25519 ECDH with NIST FIPS 203 ML-KEM-768 to derive combined shared secrets ($SS_{\text{hybrid}} = SS_{\text{pqc}} \parallel SS_{\text{ecdh}}$) and provides authenticated AES-256-GCM record protection.
+const server = createAuthenticatedHybridTlsServer({
+  key: readFileSync('server-key.pem'), cert: readFileSync('server-chain.pem'),
+}, socket => socket.on('data', data => socket.write(data)));
+server.listen(8443, '127.0.0.1');
 
-## Features
+const socket = await connectAuthenticatedHybridTls({
+  host: '127.0.0.1', port: 8443, servername: 'service.example',
+  ca: readFileSync('trusted-ca.pem'), timeoutMs: 10000,
+});
+socket.on('error', error => console.error(error.message));
+socket.write('hello');
+// Close sockets/server when finished. Install normal application stream handlers.
+```
 
-- **Hybrid Ephemeral Key Exchange:** Generates X25519 and ML-KEM-768 key shares in single pass.
-- **Transcript-Bound Key Schedule:** Derives handshake and application traffic keys using RFC 8446 HKDF-Expand-Label.
-- **Authenticated Record Protection:** AES-256-GCM with per-record sequence nonces ($IV \oplus \text{seq\_num}$) and strict authentication tag verification.
-- **Audited PQC Primitive:** Powered by `@noble/post-quantum/ml-kem.js`.
+Supply a certificate valid for the expected servername and a trusted CA; omitting ca uses the runtime trust store. The API requires TLS 1.3, X25519MLKEM768 and TLS_AES_256_GCM_SHA384. It validates the certificate, hostname and negotiated group/cipher before resolving. Extra caller properties cannot disable these checks. Node/OpenSSL performs the handshake, transcript, Finished verification, key schedule and record protection.
 
-## Build & Test
+This provides server authentication; it does not implement mutual TLS. Hybrid key exchange does not make an RSA/ECDSA certificate post-quantum authenticated. No production security certification, deployment, QuickNode or x402 integration is claimed.
 
-```bash
-npm install
-npm run build
+## Legacy helpers and compatibility
+
+`HybridTlsEngine` is deprecated for transport. Its clientInit/serverRespond/clientComplete methods exchange raw ephemeral keys without identity authentication or Finished. They are educational helpers, not a complete interoperable TLS handshake. See [HANDSHAKE_AUDIT.md](docs/HANDSHAKE_AUDIT.md) for remaining wire-format/key-schedule/record gaps.
+
+The reference HKDF-Expand-Label helper now uses Expand only, checked against published RFC 8448 key/IV vectors. This changes legacy derived outputs compared with the incorrect Extract+Expand behavior. It does not repair the entire legacy schedule. The raw record helper rejects sequence numbers outside unsigned 64-bit bounds; applications must never reuse a sequence/key pair.
+
+## Build and verification
+
+Build the sibling qmoosa-pqc-hybrid-tls-protocol repository first at commit f2e2a73688849190ee231bf887a2dbcc29324eda; the local dependency path is retained. Then run:
+
+```sh
+npm ci
 npm test
 npm run lint
 ```
 
-## Reality Gate Status
-
-- Production Deployment Status: **LOCKED (0 / 1,000 certified)**
-- Local Reality-Gate Verification: **ACTIVE**
+Tests require an OpenSSL CLI to generate an ephemeral loopback-only test identity; set OPENSSL_BIN when it is not on PATH. No private identity is committed. Tests exercise actual sockets: trusted application data, exporter agreement, untrusted certificate, wrong hostname, classical-only peer, TLS 1.2 peer and stalled handshake. Published HKDF vectors and nonce boundary regressions are separate tests. These tests are development evidence, not an independent cryptographic audit.

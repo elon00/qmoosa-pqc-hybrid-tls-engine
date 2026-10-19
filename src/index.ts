@@ -38,6 +38,8 @@ import {
   buildHkdfLabel
 } from './reference-tls-key-schedule.js';
 
+export * from './authenticated-tls.js';
+
 export * as ReferenceTlsKeySchedule from './reference-tls-key-schedule.js';
 
 // Standard constant SPKI and PKCS8 headers for X25519 (RFC 8410)
@@ -97,6 +99,10 @@ export function computeRecordNonce(baseIV: Uint8Array, sequenceNumber: bigint): 
   if (baseIV.length !== 12) {
     throw new Error('INVALID_IV_LENGTH: Base IV must be 12 bytes');
   }
+  if (typeof sequenceNumber !== 'bigint' ||
+      sequenceNumber < 0n || sequenceNumber >= (1n << 64n)) {
+    throw new RangeError('INVALID_SEQUENCE_NUMBER: Expected an unsigned 64-bit bigint');
+  }
   const nonce = new Uint8Array(baseIV);
   let seq = sequenceNumber;
   for (let i = 11; i >= 4; i--) {
@@ -106,6 +112,7 @@ export function computeRecordNonce(baseIV: Uint8Array, sequenceNumber: bigint): 
   return nonce;
 }
 
+/** @deprecated Educational raw key-exchange/record helper. Use authenticated native TLS for transport. */
 export class HybridTlsEngine {
   private readonly params: HybridGroupParameters;
 
