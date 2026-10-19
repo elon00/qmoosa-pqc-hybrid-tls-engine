@@ -136,3 +136,71 @@ test('Hybrid TLS Engine: Reference Key Schedule Verification', () => {
   const nonce = computeRecordNonce(new Uint8Array(12).fill(0xaa), 1n);
   assert.equal(nonce.length, 12);
 });
+
+// RFC 8446 section 5.3 sequence-number boundary regressions.
+const hex = bytes => Buffer.from(bytes).toString('hex');
+
+test('nonce bounds: zero retains the IV', () => {
+  const iv = new Uint8Array(12).fill(0x55);
+  assert.equal(hex(computeRecordNonce(iv, 0n)), '555555555555555555555555');
+});
+test('nonce bounds: one uses network-byte-order XOR', () => {
+  assert.equal(hex(computeRecordNonce(new Uint8Array(12), 1n)), '000000000000000000000001');
+});
+test('nonce bounds: maximum uint64 is accepted', () => {
+  assert.equal(hex(computeRecordNonce(new Uint8Array(12), (1n << 64n) - 1n)), '00000000ffffffffffffffff');
+});
+test('nonce bounds: negative values are rejected', () => {
+  assert.throws(() => computeRecordNonce(new Uint8Array(12), -1n), /INVALID_SEQUENCE_NUMBER/);
+});
+test('nonce bounds: uint64 overflow is rejected before truncation', () => {
+  assert.throws(() => computeRecordNonce(new Uint8Array(12), 1n << 64n), /INVALID_SEQUENCE_NUMBER/);
+});
+test('nonce bounds: larger overflow is rejected', () => {
+  assert.throws(() => computeRecordNonce(new Uint8Array(12), 1n << 80n), /INVALID_SEQUENCE_NUMBER/);
+});
+test('nonce bounds: runtime non-bigint inputs are rejected', () => {
+  for (const value of [0, 1, '1', null, undefined]) {
+    assert.throws(() => computeRecordNonce(new Uint8Array(12), value), /INVALID_SEQUENCE_NUMBER/);
+  }
+});
+test('nonce bounds: invalid IV length remains rejected', () => {
+  assert.throws(() => computeRecordNonce(new Uint8Array(11), 0n), /INVALID_IV_LENGTH/);
+});
+
+test('record API: encryption rejects invalid sequence numbers', () => {
+  const engine = new HybridTlsEngine();
+  const key = new Uint8Array(32).fill(0x11);
+  const iv = new Uint8Array(12).fill(0x22);
+  for (const sequence of [-1n, 1n << 64n, 1n << 80n]) {
+    assert.throws(
+      () => engine.encryptRecord(new Uint8Array([1, 2, 3]), key, iv, sequence),
+      /INVALID_SEQUENCE_NUMBER/
+    );
+  }
+});
+
+test('record API: decryption rejects overflowing explicit and stored sequences', () => {
+  const engine = new HybridTlsEngine();
+  const key = new Uint8Array(32).fill(0x11);
+  const iv = new Uint8Array(12).fill(0x22);
+  const record = engine.encryptRecord(new Uint8Array([1, 2, 3]), key, iv, 0n);
+  assert.throws(() => engine.decryptRecord(record, key, iv, 1n << 64n), /INVALID_SEQUENCE_NUMBER/);
+  assert.throws(
+    () => engine.decryptRecord({ ...record, sequenceNumber: 1n << 64n }, key, iv),
+    /INVALID_SEQUENCE_NUMBER/
+  );
+  assert.throws(
+    () => engine.decryptRecord({ ...record, sequenceNumber: -1n }, key, iv),
+    /INVALID_SEQUENCE_NUMBER/
+  );
+});
+
+test('record API: maximum uint64 sequence encrypts and decrypts correctly', () => {
+  const engine = new HybridTlsEngine();
+  const key = new Uint8Array(32).fill(0x11);
+  const iv = new Uint8Array(12).fill(0x22);
+  const message = new Uint8Array([1, 2, 3]);
+  const record = engine.encryptRecord(message, key, iv, (1n << 64n) - 1n);
+  assert.deepEqual(engine.decryptRecord(record, key, iv), message);
+});

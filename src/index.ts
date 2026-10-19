@@ -97,6 +97,10 @@ export function computeRecordNonce(baseIV: Uint8Array, sequenceNumber: bigint): 
   if (baseIV.length !== 12) {
     throw new Error('INVALID_IV_LENGTH: Base IV must be 12 bytes');
   }
+  if (typeof sequenceNumber !== 'bigint' ||
+      sequenceNumber < 0n || sequenceNumber >= (1n << 64n)) {
+    throw new RangeError('INVALID_SEQUENCE_NUMBER: Expected an unsigned 64-bit bigint');
+  }
   const nonce = new Uint8Array(baseIV);
   let seq = sequenceNumber;
   for (let i = 11; i >= 4; i--) {
