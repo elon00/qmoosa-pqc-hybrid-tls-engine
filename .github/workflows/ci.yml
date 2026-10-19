@@ -19,24 +19,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: elon00/qmoosa-pqc-hybrid-tls-protocol
-          ref: main
+          ref: f2e2a73688849190ee231bf887a2dbcc29324eda
           path: qmoosa-pqc-hybrid-tls-protocol
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '24'
 
       - name: Install and build protocol dependency
         run: |
           cd qmoosa-pqc-hybrid-tls-protocol
-          npm install
+          npm ci
           npm run build
 
       - name: Install dependencies in engine
         run: |
           cd qmoosa-pqc-hybrid-tls-engine
-          npm install
+          npm ci
 
       - name: Build TypeScript
         run: |

@@ -10,7 +10,7 @@ import {
   constantTimeEqual
 } from '@qmoosa/pqc-hybrid-tls-protocol';
 
-test('Hybrid TLS Engine: Full Handshake Round-Trip & Session Key Agreement', () => {
+test('Hybrid TLS Engine: Legacy raw key-exchange symmetry (not authenticated TLS)', () => {
   const engine = new HybridTlsEngine();
 
   // 1. Client creates ephemeral key shares
@@ -44,7 +44,7 @@ test('Hybrid TLS Engine: Full Handshake Round-Trip & Session Key Agreement', () 
   );
 });
 
-test('Hybrid TLS Engine: Bidirectional Authenticated Record Layer Encryption & Decryption', () => {
+test('Hybrid TLS Engine: Legacy AEAD helper round trip (not TLS record interoperability)', () => {
   const engine = new HybridTlsEngine();
   const transcript = new Uint8Array(32).fill(0x99);
 

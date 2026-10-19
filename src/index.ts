@@ -38,6 +38,8 @@ import {
   buildHkdfLabel
 } from './reference-tls-key-schedule.js';
 
+export * from './authenticated-tls.js';
+
 export * as ReferenceTlsKeySchedule from './reference-tls-key-schedule.js';
 
 // Standard constant SPKI and PKCS8 headers for X25519 (RFC 8410)
@@ -110,6 +112,7 @@ export function computeRecordNonce(baseIV: Uint8Array, sequenceNumber: bigint): 
   return nonce;
 }
 
+/** @deprecated Educational raw key-exchange/record helper. Use authenticated native TLS for transport. */
 export class HybridTlsEngine {
   private readonly params: HybridGroupParameters;
 
