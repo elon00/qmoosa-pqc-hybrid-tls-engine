@@ -321,3 +321,6 @@ export class HybridTlsEngine {
     }
   }
 }
+
+/** @deprecated Raw record defense-in-depth, not an RFC 8446 TLS transport. */
+export { ReplayProtectedRecordSession } from './replay-protected-record-session.js';
