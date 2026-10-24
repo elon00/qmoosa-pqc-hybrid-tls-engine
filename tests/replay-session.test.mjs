@@ -89,3 +89,46 @@ test('closed sessions reject all subsequent record operations', () => {
   assert.deepEqual(server.decrypt(record), payload('before close'));
   server.close();
 });
+
+
+/*
+ * P1 SECURITY REGRESSION GATES — intentionally fail until the exported raw
+ * adapter rejects traffic key/IV reuse across independent instances.
+ * These in-process tests do NOT prove crash/restart persistence or FIPS/TLS
+ * certification. Never weaken/skip them to obtain a green workflow.
+ */
+test('P1 nonce lifecycle: reject simultaneous sessions reusing an outbound key and IV', () => {
+  const engine = new HybridTlsEngine();
+  const sendKey = randomBytes(32);
+  const sendIV = randomBytes(12);
+  const first = new ReplayProtectedRecordSession(
+    engine, sendKey, sendIV, randomBytes(32), randomBytes(12)
+  );
+  try {
+    assert.throws(
+      () => new ReplayProtectedRecordSession(
+        engine, sendKey, sendIV, randomBytes(32), randomBytes(12)
+      ),
+      /TRAFFIC_KEY_IV_REUSE/
+    );
+  } finally {
+    first.close();
+  }
+});
+
+test('P1 nonce lifecycle: closing a session cannot reset key/IV uniqueness', () => {
+  const engine = new HybridTlsEngine();
+  const sendKey = randomBytes(32);
+  const sendIV = randomBytes(12);
+  const first = new ReplayProtectedRecordSession(
+    engine, sendKey, sendIV, randomBytes(32), randomBytes(12)
+  );
+  first.encrypt(payload('first record before close'));
+  first.close();
+  assert.throws(
+    () => new ReplayProtectedRecordSession(
+      engine, sendKey, sendIV, randomBytes(32), randomBytes(12)
+    ),
+    /TRAFFIC_KEY_IV_REUSE/
+  );
+});
