@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Defense-in-depth adapter for the DEPRECATED raw HybridTlsEngine record helper.
  * NOT an RFC 8446 record implementation; prefer authenticated Node/OpenSSL TLS.
@@ -9,6 +11,13 @@ export interface RawRecordCodec<R extends RawRecord> {
   decryptRecord(record: R, key: Uint8Array, iv: Uint8Array, sequence?: bigint): Uint8Array;
 }
 const LIMIT = 1n << 64n;
+
+// Partial, in-process defense against accidentally reusing AES-GCM traffic
+// key+nonce pairs. Deliberately never cleared on close. This is NOT durable
+// across process restart, multiple workers, or multiple host instances.
+// The raw adapter remains unsupported for production transports.
+const MAX_TRACKED_SEND_KEY_IV_PAIRS = 65_536;
+const usedOutboundTrafficKeyIv = new Set<string>();
 
 export class ReplayProtectedRecordSession<R extends RawRecord> {
   readonly #codec: RawRecordCodec<R>;
@@ -30,6 +39,21 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
     if (sendKey.every((x, i) => x === recvKey[i]) && sendIV.every((x, i) => x === recvIV[i])) {
       throw new Error('DIRECTIONAL_KEY_IV_REUSE');
     }
+    // Only outbound key/IV pairs are reserved: the peer's receive pair must
+    // match this sender's pair and must not be mistaken for a second sender.
+    // Hashing avoids retaining raw key material in the process-wide registry.
+    const fingerprint = createHash('sha256')
+      .update('QMOOSA-RAW-RECORD-OUTBOUND-V1')
+      .update(sendKey)
+      .update(sendIV)
+      .digest('hex');
+    if (usedOutboundTrafficKeyIv.has(fingerprint)) {
+      throw new Error('TRAFFIC_KEY_IV_REUSE');
+    }
+    if (usedOutboundTrafficKeyIv.size >= MAX_TRACKED_SEND_KEY_IV_PAIRS) {
+      throw new Error('TRAFFIC_KEY_IV_TRACKING_CAPACITY_EXHAUSTED');
+    }
+    usedOutboundTrafficKeyIv.add(fingerprint);
     this.#codec = codec;
     this.#sendKey = Uint8Array.from(sendKey);
     this.#sendIV = Uint8Array.from(sendIV);
