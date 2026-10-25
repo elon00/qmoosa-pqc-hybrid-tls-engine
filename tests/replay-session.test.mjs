@@ -132,3 +132,47 @@ test('P1 nonce lifecycle: closing a session cannot reset key/IV uniqueness', () 
     /TRAFFIC_KEY_IV_REUSE/
   );
 });
+
+
+/*
+ * P1 fail-closed regression: an in-memory registry cannot protect a restarted
+ * process or another worker. This uses two real Node processes and the actual
+ * compiled HybridTlsEngine codec. It intentionally FAILS until a durable,
+ * multi-process-safe traffic-key/IV uniqueness mechanism is implemented.
+ * No real credentials or persistent secret keys are used.
+ */
+test('P1 restart isolation: reject outbound key/IV reuse after a process exits', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const sendKey = randomBytes(32);
+  const sendIV = randomBytes(12);
+  const childScript = `
+    import { HybridTlsEngine, ReplayProtectedRecordSession } from './dist/index.js';
+    const sendKey = Buffer.from(process.argv[1], 'hex');
+    const sendIV = Buffer.from(process.argv[2], 'hex');
+    try {
+      const session = new ReplayProtectedRecordSession(
+        new HybridTlsEngine(), sendKey, sendIV,
+        Buffer.alloc(32, 0x73), Buffer.alloc(12, 0x27)
+      );
+      session.encrypt(new TextEncoder().encode('test-only record'));
+      session.close();
+      process.stdout.write('ACCEPTED');
+    } catch (error) {
+      process.stderr.write(String(error?.message ?? error));
+      process.exitCode = 42;
+    }
+  `;
+  const invoke = () => spawnSync(process.execPath, [
+    '--input-type=module', '-e', childScript,
+    sendKey.toString('hex'), sendIV.toString('hex')
+  ], { encoding: 'utf8', timeout: 15000, cwd: process.cwd() });
+
+  const first = invoke();
+  assert.equal(first.status, 0, `initial sender must work: ${first.stderr}`);
+  const afterRestart = invoke();
+  assert.equal(
+    afterRestart.status, 42,
+    'P1: restarted/second process accepted the SAME outbound AES-GCM key/IV'
+  );
+  assert.match(afterRestart.stderr, /TRAFFIC_KEY_IV_REUSE/);
+});
