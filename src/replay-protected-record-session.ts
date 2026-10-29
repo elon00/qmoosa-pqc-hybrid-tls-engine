@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, writeSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 
 /**
  * Defense-in-depth adapter for the DEPRECATED raw HybridTlsEngine record helper.
@@ -12,12 +14,42 @@ export interface RawRecordCodec<R extends RawRecord> {
 }
 const LIMIT = 1n << 64n;
 
-// Partial, in-process defense against accidentally reusing AES-GCM traffic
-// key+nonce pairs. Deliberately never cleared on close. This is NOT durable
-// across process restart, multiple workers, or multiple host instances.
-// The raw adapter remains unsupported for production transports.
-const MAX_TRACKED_SEND_KEY_IV_PAIRS = 65_536;
-const usedOutboundTrafficKeyIv = new Set<string>();
+// TEST-ONLY, same-host reservation. An exclusive-create file plus fsync
+// rejects key/IV reuse across cooperating local processes and restarts.
+// This is NOT a multi-host/remote-filesystem-safe nonce allocator, and the
+// raw adapter must never be used as a production TLS transport.
+function reserveOutboundKeyIv(fingerprint: string): void {
+  const directory = process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR;
+  if (!directory || !isAbsolute(directory)) throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  try {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    if (!lstatSync(directory).isDirectory()) throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  } catch {
+    throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  }
+  let fd: number;
+  try {
+    fd = openSync(join(directory, fingerprint), 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('TRAFFIC_KEY_IV_REUSE');
+    throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  }
+  try {
+    writeSync(fd, 'reserved\\n');
+    fsyncSync(fd);
+  } catch {
+    throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  } finally {
+    closeSync(fd);
+  }
+  // Do not allow a session to encrypt until the reservation is durable.
+  try {
+    const directoryFd = openSync(directory, 'r');
+    try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
+  } catch {
+    throw new Error('NONCE_REGISTRY_UNAVAILABLE');
+  }
+}
 
 export class ReplayProtectedRecordSession<R extends RawRecord> {
   readonly #codec: RawRecordCodec<R>;
@@ -47,13 +79,11 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
       .update(sendKey)
       .update(sendIV)
       .digest('hex');
-    if (usedOutboundTrafficKeyIv.has(fingerprint)) {
-      throw new Error('TRAFFIC_KEY_IV_REUSE');
+    // Explicit opt-in is limited to isolated tests; fail closed by default.
+    if (process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
+      throw new Error('RAW_RECORD_ADAPTER_DISABLED');
     }
-    if (usedOutboundTrafficKeyIv.size >= MAX_TRACKED_SEND_KEY_IV_PAIRS) {
-      throw new Error('TRAFFIC_KEY_IV_TRACKING_CAPACITY_EXHAUSTED');
-    }
-    usedOutboundTrafficKeyIv.add(fingerprint);
+    reserveOutboundKeyIv(fingerprint);
     this.#codec = codec;
     this.#sendKey = Uint8Array.from(sendKey);
     this.#sendIV = Uint8Array.from(sendIV);
