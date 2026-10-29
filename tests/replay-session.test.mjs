@@ -1,6 +1,15 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// Unique local test-only registry; child processes inherit these settings.
+const nonceRegistry = mkdtempSync(join(tmpdir(), 'qmoosa-nonce-regression-'));
+process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR = nonceRegistry;
+process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = '1';
+after(() => rmSync(nonceRegistry, { recursive: true, force: true }));
 import { HybridTlsEngine, ReplayProtectedRecordSession } from '../dist/index.js';
 
 // Integration tests exercise the actual HybridTlsEngine AEAD codec and
@@ -175,4 +184,66 @@ test('P1 restart isolation: reject outbound key/IV reuse after a process exits',
     'P1: restarted/second process accepted the SAME outbound AES-GCM key/IV'
   );
   assert.match(afterRestart.stderr, /TRAFFIC_KEY_IV_REUSE/);
+});
+
+
+test('P1 fail-closed: raw adapter requires explicit test-only opt-in', () => {
+  const saved = process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+  delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+  try {
+    assert.throws(() => new ReplayProtectedRecordSession(
+      new HybridTlsEngine(), randomBytes(32), randomBytes(12),
+      randomBytes(32), randomBytes(12)
+    ), /RAW_RECORD_ADAPTER_DISABLED/);
+  } finally {
+    if (saved === undefined) delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+    else process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = saved;
+  }
+});
+
+test('P1 fail-closed: missing local registry refuses raw record construction', () => {
+  const saved = process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR;
+  delete process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR;
+  try {
+    assert.throws(() => new ReplayProtectedRecordSession(
+      new HybridTlsEngine(), randomBytes(32), randomBytes(12),
+      randomBytes(32), randomBytes(12)
+    ), /NONCE_REGISTRY_UNAVAILABLE/);
+  } finally {
+    if (saved === undefined) delete process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR;
+    else process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR = saved;
+  }
+});
+
+test('P1 concurrent processes: only one sender may reserve a repeated key/IV', async () => {
+  const { spawn } = await import('node:child_process');
+  const key = randomBytes(32).toString('hex');
+  const iv = randomBytes(12).toString('hex');
+  const script = `
+    import { HybridTlsEngine, ReplayProtectedRecordSession } from './dist/index.js';
+    try {
+      const session = new ReplayProtectedRecordSession(
+        new HybridTlsEngine(), Buffer.from(process.argv[1], 'hex'),
+        Buffer.from(process.argv[2], 'hex'), Buffer.alloc(32, 0x73),
+        Buffer.alloc(12, 0x27)
+      );
+      session.encrypt(new TextEncoder().encode('test-only concurrent record'));
+      session.close();
+    } catch (error) {
+      process.stderr.write(String(error?.message ?? error));
+      process.exitCode = 42;
+    }
+  `;
+  const run = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, key, iv], {
+      cwd: process.cwd(), env: process.env
+    });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', code => resolve({ code, stderr }));
+  });
+  const results = await Promise.all([run(), run()]);
+  assert.deepEqual(results.map(x => x.code).sort((a, b) => a - b), [0, 42]);
+  assert.match(results.find(x => x.code === 42).stderr, /TRAFFIC_KEY_IV_REUSE/);
 });
