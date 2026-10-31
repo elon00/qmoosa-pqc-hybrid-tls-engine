@@ -9,6 +9,7 @@ import { join } from 'node:path';
 const nonceRegistry = mkdtempSync(join(tmpdir(), 'qmoosa-nonce-regression-'));
 process.env.QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR = nonceRegistry;
 process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = '1';
+process.env.NODE_ENV = 'test';
 after(() => rmSync(nonceRegistry, { recursive: true, force: true }));
 import { HybridTlsEngine, ReplayProtectedRecordSession } from '../dist/index.js';
 
@@ -186,6 +187,27 @@ test('P1 restart isolation: reject outbound key/IV reuse after a process exits',
   assert.match(afterRestart.stderr, /TRAFFIC_KEY_IV_REUSE/);
 });
 
+
+test('P1 fail-closed: non-test runtime rejects raw adapter despite test-only opt-in', () => {
+  const saved = process.env.NODE_ENV;
+  try {
+    for (const mode of ['production', 'development', '']) {
+      process.env.NODE_ENV = mode;
+      assert.throws(() => new ReplayProtectedRecordSession(
+        new HybridTlsEngine(), randomBytes(32), randomBytes(12),
+        randomBytes(32), randomBytes(12)
+      ), /RAW_RECORD_ADAPTER_DISABLED/, `NODE_ENV=${mode} must not enable the raw adapter`);
+    }
+    delete process.env.NODE_ENV;
+    assert.throws(() => new ReplayProtectedRecordSession(
+      new HybridTlsEngine(), randomBytes(32), randomBytes(12),
+      randomBytes(32), randomBytes(12)
+    ), /RAW_RECORD_ADAPTER_DISABLED/);
+  } finally {
+    if (saved === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = saved;
+  }
+});
 
 test('P1 fail-closed: raw adapter requires explicit test-only opt-in', () => {
   const saved = process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
