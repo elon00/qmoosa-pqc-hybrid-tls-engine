@@ -269,3 +269,26 @@ test('P1 concurrent processes: only one sender may reserve a repeated key/IV', a
   assert.deepEqual(results.map(x => x.code).sort((a, b) => a - b), [0, 42]);
   assert.match(results.find(x => x.code === 42).stderr, /TRAFFIC_KEY_IV_REUSE/);
 });
+
+test('P1 fail-closed: existing raw sessions reject operations after test-mode revocation', () => {
+  const { client, server } = connectedSessions();
+  const record = client.encrypt(payload('before revocation'));
+  const savedMode = process.env.NODE_ENV;
+  const savedOptIn = process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+  try {
+    process.env.NODE_ENV = 'production';
+    assert.throws(() => client.encrypt(payload('must reject')), /RAW_RECORD_ADAPTER_DISABLED/);
+    assert.throws(() => server.decrypt(record), /RAW_RECORD_ADAPTER_DISABLED/);
+    process.env.NODE_ENV = 'test';
+    delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+    assert.throws(() => client.encrypt(payload('must still reject')), /RAW_RECORD_ADAPTER_DISABLED/);
+    assert.throws(() => server.decrypt(record), /RAW_RECORD_ADAPTER_DISABLED/);
+  } finally {
+    if (savedMode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedMode;
+    if (savedOptIn === undefined) delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+    else process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = savedOptIn;
+    client.close();
+    server.close();
+  }
+});
