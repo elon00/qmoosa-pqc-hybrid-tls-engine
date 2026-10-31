@@ -32,6 +32,13 @@ This provides server authentication; it does not implement mutual TLS. Hybrid ke
 
 The reference HKDF-Expand-Label helper now uses Expand only, checked against published RFC 8448 key/IV vectors. This changes legacy derived outputs compared with the incorrect Extract+Expand behavior. It does not repair the entire legacy schedule. The raw record helper rejects sequence numbers outside unsigned 64-bit bounds; applications must never reuse a sequence/key pair.
 
+Both direct `HybridTlsEngine.encryptRecord` / `decryptRecord` and the deprecated
+`ReplayProtectedRecordSession` are **test-only raw AEAD helpers**. Direct methods
+have no nonce reservation or sequence lifecycle and now reject non-test or
+non-opt-in runtimes. Never use them in a deployed transport, even if environment
+variables are misconfigured to permit them. These gates are defense in depth,
+not a trustworthy deployment isolation mechanism.
+
 The deprecated `ReplayProtectedRecordSession` fails closed unless **all** of
 `NODE_ENV=test`, `QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY=1`, and an
 absolute, writable `QMOOSA_RAW_RECORD_NONCE_REGISTRY_DIR` are present.

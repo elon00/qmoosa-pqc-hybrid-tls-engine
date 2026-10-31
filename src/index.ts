@@ -113,6 +113,15 @@ export function computeRecordNonce(baseIV: Uint8Array, sequenceNumber: bigint): 
 }
 
 /** @deprecated Educational raw key-exchange/record helper. Use authenticated native TLS for transport. */
+// Stateless legacy AEAD bypasses ReplayProtectedRecordSession's nonce registry.
+// Test-only gating is defense in depth, NOT trusted production isolation.
+function requireLegacyRawRecordTestMode(): void {
+  if (process.env.NODE_ENV !== 'test' ||
+      process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
+    throw new Error('RAW_RECORD_ADAPTER_DISABLED');
+  }
+}
+
 export class HybridTlsEngine {
   private readonly params: HybridGroupParameters;
 
@@ -264,6 +273,7 @@ export class HybridTlsEngine {
     sequenceNumber: bigint,
     contentType = 23 // Application Data
   ): EncryptedTlsRecord {
+    requireLegacyRawRecordTestMode();
     const nonce = computeRecordNonce(writeIV, sequenceNumber);
     const cipher = createCipheriv('aes-256-gcm', Buffer.from(writeKey), Buffer.from(nonce));
 
@@ -299,6 +309,7 @@ export class HybridTlsEngine {
     writeIV: Uint8Array,
     sequenceNumber?: bigint
   ): Uint8Array {
+    requireLegacyRawRecordTestMode();
     const seq = sequenceNumber ?? record.sequenceNumber;
     const nonce = computeRecordNonce(writeIV, seq);
     const decipher = createDecipheriv('aes-256-gcm', Buffer.from(writeKey), Buffer.from(nonce));
