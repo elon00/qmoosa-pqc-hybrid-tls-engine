@@ -14,6 +14,16 @@ export interface RawRecordCodec<R extends RawRecord> {
 }
 const LIMIT = 1n << 64n;
 
+// Recheck on every record operation, not only at construction: a test-only
+// session must fail closed if its opt-in/runtime is subsequently revoked.
+// Environment variables remain defense in depth, NOT a production boundary.
+function requireRawRecordTestMode(): void {
+  if (process.env.NODE_ENV !== 'test' ||
+      process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
+    throw new Error('RAW_RECORD_ADAPTER_DISABLED');
+  }
+}
+
 // TEST-ONLY, same-host reservation. An exclusive-create file plus fsync
 // rejects key/IV reuse across cooperating local processes and restarts.
 // This is NOT a multi-host/remote-filesystem-safe nonce allocator, and the
@@ -81,10 +91,7 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
       .digest('hex');
     // Require BOTH an explicit test runtime and opt-in. This is only defense in depth:
     // environment variables are not a trusted production authorization boundary.
-    if (process.env.NODE_ENV !== 'test' ||
-        process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
-      throw new Error('RAW_RECORD_ADAPTER_DISABLED');
-    }
+    requireRawRecordTestMode();
     reserveOutboundKeyIv(fingerprint);
     this.#codec = codec;
     this.#sendKey = Uint8Array.from(sendKey);
@@ -95,6 +102,7 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
 
   encrypt(plaintext: Uint8Array, contentType = 23): R {
     if (this.#closed) throw new Error('RECORD_SESSION_CLOSED');
+    requireRawRecordTestMode();
     if (this.#nextSend >= LIMIT) throw new Error('RECORD_SEQUENCE_EXHAUSTED_REKEY_REQUIRED');
     if (!(plaintext instanceof Uint8Array) || plaintext.length > 16384) throw new Error('INVALID_RECORD_PLAINTEXT');
     const seq = this.#nextSend++;
@@ -103,6 +111,7 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
 
   decrypt(record: R): Uint8Array {
     if (this.#closed) throw new Error('RECORD_SESSION_CLOSED');
+    requireRawRecordTestMode();
     if (this.#nextReceive >= LIMIT) throw new Error('RECORD_SEQUENCE_EXHAUSTED_REKEY_REQUIRED');
     if (!record || typeof record.sequenceNumber !== 'bigint' || record.sequenceNumber !== this.#nextReceive) {
       throw new Error('REPLAY_OR_OUT_OF_ORDER_RECORD');
