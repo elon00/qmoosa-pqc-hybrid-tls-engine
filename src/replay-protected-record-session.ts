@@ -79,8 +79,10 @@ export class ReplayProtectedRecordSession<R extends RawRecord> {
       .update(sendKey)
       .update(sendIV)
       .digest('hex');
-    // Explicit opt-in is limited to isolated tests; fail closed by default.
-    if (process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
+    // Require BOTH an explicit test runtime and opt-in. This is only defense in depth:
+    // environment variables are not a trusted production authorization boundary.
+    if (process.env.NODE_ENV !== 'test' ||
+        process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY !== '1') {
       throw new Error('RAW_RECORD_ADAPTER_DISABLED');
     }
     reserveOutboundKeyIv(fingerprint);
