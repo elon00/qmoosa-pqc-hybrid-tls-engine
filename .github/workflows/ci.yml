@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout engine repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: qmoosa-pqc-hybrid-tls-engine
 
       - name: Checkout protocol repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: elon00/qmoosa-pqc-hybrid-tls-protocol
           ref: f2e2a73688849190ee231bf887a2dbcc29324eda
