@@ -1,4 +1,7 @@
 import test from 'node:test';
+// The raw record tests run only in explicit test mode.
+process.env.NODE_ENV = 'test';
+process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = '1';
 import assert from 'node:assert/strict';
 import {
   HybridTlsEngine,
@@ -203,4 +206,33 @@ test('record API: maximum uint64 sequence encrypts and decrypts correctly', () =
   const message = new Uint8Array([1, 2, 3]);
   const record = engine.encryptRecord(message, key, iv, (1n << 64n) - 1n);
   assert.deepEqual(engine.decryptRecord(record, key, iv), message);
+});
+
+
+test('P1: direct stateless AEAD methods fail closed outside explicit test mode', () => {
+  const originalMode = process.env.NODE_ENV;
+  const originalOptIn = process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+  const engine = new HybridTlsEngine();
+  const key = new Uint8Array(32).fill(0x11);
+  const iv = new Uint8Array(12).fill(0x22);
+  const record = { sequenceNumber: 0n };
+  try {
+    for (const mode of ['production', 'development', '']) {
+      process.env.NODE_ENV = mode;
+      process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = '1';
+      assert.throws(() => engine.encryptRecord(new Uint8Array([1]), key, iv, 0n), /RAW_RECORD_ADAPTER_DISABLED/);
+      assert.throws(() => engine.decryptRecord(record, key, iv), /RAW_RECORD_ADAPTER_DISABLED/);
+    }
+    delete process.env.NODE_ENV;
+    assert.throws(() => engine.encryptRecord(new Uint8Array([1]), key, iv, 0n), /RAW_RECORD_ADAPTER_DISABLED/);
+    process.env.NODE_ENV = 'test';
+    delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+    assert.throws(() => engine.encryptRecord(new Uint8Array([1]), key, iv, 0n), /RAW_RECORD_ADAPTER_DISABLED/);
+    assert.throws(() => engine.decryptRecord(record, key, iv), /RAW_RECORD_ADAPTER_DISABLED/);
+  } finally {
+    if (originalMode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalMode;
+    if (originalOptIn === undefined) delete process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY;
+    else process.env.QMOOSA_ENABLE_UNSAFE_RAW_RECORD_TEST_ONLY = originalOptIn;
+  }
 });
